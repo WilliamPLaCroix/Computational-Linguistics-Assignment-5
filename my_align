@@ -1,0 +1,51 @@
+#!/usr/bin/env python
+import optparse
+import sys
+from collections import defaultdict
+
+optparser = optparse.OptionParser()
+optparser.add_option("-d", "--data", dest="train", default="data/hansards", help="Data filename prefix (default=data)")
+optparser.add_option("-e", "--english", dest="english", default="e", help="Suffix of English filename (default=e)")
+optparser.add_option("-f", "--french", dest="french", default="f", help="Suffix of French filename (default=f)")
+optparser.add_option("-t", "--threshold", dest="threshold", default=0.5, type="float", help="Threshold for aligning with Dice's coefficient (default=0.5)")
+optparser.add_option("-n", "--num_sentences", dest="num_sents", default=100000000000, type="int", help="Number of sentences to use for training and alignment")
+(opts, _) = optparser.parse_args()
+f_data = "%s.%s" % (opts.train, opts.french)
+e_data = "%s.%s" % (opts.train, opts.english)
+
+sys.stderr.write("Training with IMB Model 1...")
+bitext = [[sentence.strip().split() for sentence in pair] for pair in zip(open(f_data), open(e_data))][:opts.num_sents]
+
+k: int = 0 # epoch counter
+theta = defaultdict(lambda:1) # A common choice is to initialize uniformly (didn't see any difference in final theta between different starting lambda values)
+while k < 8: # Until parameters converge or some other criterion, such as a fixed number of iterations is met (after 8 epochs, improvements of P < 0.001)
+    k += 1
+    full_pair_count, full_e_count = defaultdict(int), defaultdict(int) # Initialze all counts to 0
+    for (n, (F, E)) in enumerate(bitext): # E-Step: Compute expected counts
+        for f in F:
+            Z: float = 0 # Z is commonly used to denote a normalization term 
+            for e in E:
+                Z += theta[(f, e)] # Increase normalization factor by current probability of (f|e)
+            for e in E:
+                c: float = theta[(f, e)] / Z # Compute expected count
+                full_pair_count[(f, e)] += c # Increment count of alignments by expected count
+                full_e_count[e] += c # Increment marginal count of English word by expected count
+    theta = {word_pair: full_pair_count[word_pair]/full_e_count[word_pair[1]] for word_pair in full_pair_count} # M-Step: Normalize probabilities by new expected counts
+
+with open("./data/trained.a", "w", encoding="utf-8") as f_out:
+    for (f, e) in bitext:
+        for (i, f_i) in enumerate(f):
+            """Two 'best_X' variables below only used for best probability guessing"""
+            best_prob, best_e = 0, 0 # tracks index and probability of best guess English word for each French word in sentence
+            for (j, e_j) in enumerate(e):
+                """The two lines below are for threshold guessing"""
+                # if theta[(f_i,e_j)] >= opts.threshold:
+                #     sys.stdout.write("%i-%i " % (i,j))
+                """The four lines below are for best probability guessing"""
+                if theta[(f_i,e_j)] >= best_prob:
+                    best_prob = theta[(f_i,e_j)]
+                    best_e = j
+            sys.stdout.write("%i-%i " % (i,best_e))
+            f_out.write("%i-%i " % (i,best_e))
+        sys.stdout.write("\n")
+        f_out.write("\n")
